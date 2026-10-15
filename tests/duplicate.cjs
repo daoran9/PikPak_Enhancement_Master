@@ -94,6 +94,17 @@ test('不同封装、不同哈希但名称时长大小吻合仍保留相似候�
   const g = await harness().groups([file('a', {hash: 'a', params: {duration: 1000}}), file('b', {name: 'sample.mkv', hash: 'b', size: 1005000, params: {duration: 1001}})]);
   assert.equal(g.length, 1); assert.equal(g[0].type, 'sim');
 });
+test('Unrelated titles are not grouped only because duration and size are close', async () => {
+  for (const strictness of ['strict', 'loose']) {
+    const items = [
+      file('a', {name: 'Coastal sunrise.mp4', size: 1000000, params: {duration: 600}}),
+      file('b', {name: 'Camera workshop.mp4', size: 1009000, params: {duration: 598}}),
+      file('c', {name: 'Acoustic lesson.mp4', size: 1012000, params: {duration: 598}})
+    ];
+    assert.equal((await harness({strictness}).groups(items)).length, 0);
+  }
+});
+
 test('内容哈希一致优先于分集名称差异', async () => {
   const g = await harness().groups([file('a', {name: 'episode 1.mp4', hash: 'same'}), file('b', {name: 'episode 2.mp4', hash: 'same'})]);
   assert.equal(g.length, 1); assert.equal(g[0].type, 'hash');

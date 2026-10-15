@@ -15498,7 +15498,7 @@ ${CONF.icons.search || '<svg viewBox="0 0 24 24" fill="none" stroke="currentColo
 
 <style>
 /* The grid header also uses z-index 30; lift the search bar while its popup is open. */
-#pk-top-bar:has(#pk-folder-search-controls[open]) { z-index:50!important; }
+#pk-top-bar:has(#pk-folder-search-controls[open]) { z-index:50!important; overflow:visible!important; }
 #pk-folder-search-controls { position:relative; flex:0 0 auto; color:var(--pk-fg); font-size:14px; line-height:1.5; }
 #pk-folder-search-controls, #pk-folder-search-controls * { box-sizing:border-box; }
 #pk-folder-search-controls > summary { padding:8px 10px; cursor:pointer; white-space:nowrap; border-radius:6px; }
@@ -26536,14 +26536,8 @@ if (sizeSimilarity !== null && (1 - sizeSimilarity) > duplicateProfile.sizeDiffe
 const nameSimilarity = duplicateNameSimilarity(a.name, b.name);
 const sameName = !!a.name && a.name === b.name;
 const nameMatched = sameName || nameSimilarity >= duplicateProfile.nameSimilarityLimit;
-const sameExtension = !!a.extension && !!b.extension && a.extension === b.extension;
-const strongSizeSimilarity = strictness === 'loose' ? 0.95 : 0.98;
 
 if (requireName && !nameMatched) {
-    if (a.type === 'video' && a.duration > 0 && b.duration > 0 && sameExtension &&
-        sizeSimilarity !== null && sizeSimilarity >= strongSizeSimilarity) {
-        return { matched: true, reason: 'metadata_strong', level: 'metadata', score: 3, nameSimilarity, sizeSimilarity };
-    }
     return { matched: false, reason: 'name', nameSimilarity, sizeSimilarity };
 }
 if (a.type === 'video' && a.duration > 0 && b.duration > 0 && sizeSimilarity === null) {
