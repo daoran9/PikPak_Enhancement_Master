@@ -26382,9 +26382,59 @@ if (S.liveRefreshCtx === ctx) S.liveRefreshCtx = null;
 if (S.mergeRefreshCtx === ctx) S.mergeRefreshCtx = null;
 }
 
+const getDuplicateItemType = (item) => {
+const mime = String(item && item.mime_type || '').toLowerCase();
+if (mime.startsWith('video/')) return 'video';
+if (mime.startsWith('image/')) return 'image';
+if (mime.startsWith('audio/')) return 'other';
+const ext = getItemExt(item);
+if (FOLDER_SEARCH_EXTS.video.has(ext)) return 'video';
+if (FOLDER_SEARCH_EXTS.image.has(ext)) return 'image';
+return 'other';
+};
+
+const getDuplicateKnownDuration = (item) => {
+const parse = value => {
+const n = Number(value);
+return Number.isFinite(n) && n > 0 ? n : 0;
+};
+return getFileDurationSeconds(item) || parse(S.durationMap && S.durationMap.get(item.id)) ||
+parse(gmGet('pk_duration_' + item.id, 0));
+};
+
+const getDuplicateSequenceTokens = (item) => {
+// A numbered segment is meaningful; an explicit "copy (1)" suffix is not.
+const name = String(item && item.name || '').toLowerCase().replace(/\.[^/.]+$/, '')
+.replace(/\s*[-_ .．。]*\s*(?:copy|duplicate|dup|副本|复制|拷贝|拷貝|コピー|複製|복사본|사본|복사)\s*(?:\d+|\(\s*\d+\s*\)|（\s*\d+\s*）|\[\s*\d+\s*\]|【\s*\d+\s*】)?\s*$/iu, '');
+const tokens = new Map();
+const seasonEpisode = name.match(/(?:^|[\s._-])s(\d{1,3})[\s._-]*e(\d{1,4})(?=$|[\s._-])/i);
+if (seasonEpisode) {
+tokens.set('season', Number(seasonEpisode[1]));
+tokens.set('episode', Number(seasonEpisode[2]));
+}
+for (const match of name.matchAll(/(?:^|[\s._-])(episode|ep|part|pt|disc|disk|cd|volume|vol)[\s._-]*(\d+)(?=$|[\s._-])/gi)) {
+const key = /^(episode|ep)$/.test(match[1]) ? 'episode' : /^(part|pt)$/.test(match[1]) ? 'part' : /^(disc|disk|cd)$/.test(match[1]) ? 'disc' : 'volume';
+tokens.set(key, Number(match[2]));
+}
+for (const match of name.matchAll(/第\s*(\d+)\s*([集话話部段章])/g)) {
+tokens.set(/[集话話]/.test(match[2]) ? 'episode' : 'part', Number(match[1]));
+}
+const suffix = name.match(/[（(\[【]\s*(\d+)\s*[）)\]】]\s*$/u);
+if (suffix) tokens.set('suffix', Number(suffix[1]));
+return tokens;
+};
+
+const duplicateSequenceConflict = (a, b) => {
+for (const [key, value] of a.sequence) {
+if (b.sequence.has(key) && b.sequence.get(key) !== value) return true;
+}
+return false;
+};
+
 const computeDuplicateGroups = async (candidates, cfg, isRunningFn) => {
 const groups =[];
 const assigned = new Set();
+const duplicateMetaCache = new Map();
 const rawStrictness = gmGet('pk_dup_strictness', 'strict');
 const strictness = rawStrictness === 'loose' ? 'loose' : 'strict';
 const duplicateProfile = strictness === 'loose' ? {
@@ -26405,7 +26455,7 @@ const normalizeDuplicateMetaName = (value) => {
 let name = String(value || '').replace(/[\r\n\v\f\u2028\u2029]+/g, ' ').trim().toLowerCase();
 name = name.replace(/\.[^/.]+$/, '');
 name = name.replace(/\s*[-_ .．。]+\s*(?:copy|duplicate|dup|副本|复制|拷贝|拷貝|コピー|複製|복사본|사본|복사)\s*\d*\s*$/iu, '');
-name = name.replace(/\s*[-_ .．。]*\s*(?:\(\s*\d+\s*\)|（\s*\d+\s*）|\[\s*\d+\s*\]|【\s*\d+\s*】)\s*$/u, '');
+
 name = name.replace(/[._()[\]{}【】（）《》<>\-]+/g, ' ').replace(/\s+/g, ' ').trim();
 return name;
 };
@@ -26443,20 +26493,22 @@ return Math.min(a, b) / Math.max(a, b);
 };
 
 const getDuplicateMeta = (item) => {
-const mime = String(item && item.mime_type || '').toLowerCase();
-const type = mime.startsWith('video') ? 'video' : mime.startsWith('image') ? 'image' : 'other';
-const name = normalizeDuplicateMetaName(item && item.name);
+if (duplicateMetaCache.has(item)) return duplicateMetaCache.get(item);
 const extMatch = String(item && item.name || '').match(/\.([a-z0-9]{1,8})$/i);
-return {
+const rawSize = Number(item && item.size || 0);
+const meta = {
     item,
     id: item && item.id,
-    type,
+    type: getDuplicateItemType(item),
     hash: String(item && (item.gcid || item.md5_checksum || item.hash) || '').trim().toLowerCase(),
-    size: Number(item && item.size || 0),
-    duration: Number(item && item.params && item.params.duration || 0),
-    name,
-    extension: extMatch ? extMatch[1].toLowerCase() : ''
+    size: Number.isFinite(rawSize) && rawSize > 0 ? rawSize : 0,
+    duration: getDuplicateKnownDuration(item),
+    name: normalizeDuplicateMetaName(item && item.name),
+    extension: extMatch ? extMatch[1].toLowerCase() : '',
+    sequence: getDuplicateSequenceTokens(item)
 };
+duplicateMetaCache.set(item, meta);
+return meta;
 };
 
 const compareDuplicateMetadata = (a, b, options = {}) => {
@@ -26466,6 +26518,8 @@ if (!a || !b || a.type !== b.type) return { matched: false, reason: 'type' };
 if (a.hash && b.hash && a.hash === b.hash && (!a.size || !b.size || a.size === b.size)) {
     return { matched: true, reason: 'hash', level: 'exact', score: 1 };
 }
+
+if (duplicateSequenceConflict(a, b)) return { matched: false, reason: 'sequence' };
 
 if (a.type === 'video' && a.duration > 0 && b.duration > 0) {
     const tolerance = Math.min(getDuplicateDurationTolerance(a.duration), getDuplicateDurationTolerance(b.duration));
@@ -26543,8 +26597,8 @@ let hashProcessed = 0;
 const hashBuildTotal = candidates.length;
 
 for (const item of candidates) {
-const hash = item.gcid || item.md5_checksum || item.hash;
-const key = hash ? `${hash}|${item.size}` : null;
+const meta = getDuplicateMeta(item);
+const key = meta.hash ? `${meta.hash}|${meta.size}` : null;
 if (key) {
 if (!hashMap.has(key)) hashMap.set(key,[]);
 hashMap.get(key).push(item);
@@ -26583,7 +26637,7 @@ setStageProgress('hash', 1, 1, 1, 1);
 
 if (isRunningFn() && cfg.video) {
 const simCandidates = candidates
-    .filter(i => String(i && i.mime_type || '').toLowerCase().startsWith('video') && !assigned.has(i.id))
+    .filter(i => getDuplicateItemType(i) === 'video' && !assigned.has(i.id))
     .map(getDuplicateMeta)
     .filter(meta => meta.duration > 0);
 const totalCount = simCandidates.length;
@@ -26715,19 +26769,13 @@ return finalResult;
 };
 
 const remainingItems = candidates.filter(i => !assigned.has(i.id));
-const getTypeGroup = (mime) => {
-if (!mime) return 'other';
-if (mime.startsWith('video')) return 'video';
-if (mime.startsWith('image')) return 'image';
-return 'other';
-};
 
 const typeNameMap = new Map();
 let nameBuildProcessed = 0;
 const nameBuildTotal = remainingItems.length;
 
 for (const item of remainingItems) {
-const tGroup = getTypeGroup(item.mime_type);
+const tGroup = getDuplicateItemType(item);
 const cleaned = cleanNameAd(item.name);
 if (cleaned) {
 const key = tGroup + '|' + cleaned;
@@ -26761,6 +26809,11 @@ const isMatch = currentGroup.every(member => {
     const memberMeta = getDuplicateMeta(member);
     const memberSize = Number(memberMeta.size || 0);
     const targetSize = Number(targetMeta.size || 0);
+    if (duplicateSequenceConflict(memberMeta, targetMeta)) return false;
+    // Without two known video durations, require an exact, known size for name candidates.
+    if (memberMeta.type === 'video' && !(memberMeta.duration > 0 && targetMeta.duration > 0)) {
+        return memberSize > 0 && targetSize > 0 && memberSize === targetSize;
+    }
 
     if (memberMeta.type === 'video' && memberMeta.duration > 0 && targetMeta.duration > 0) {
         const tolerance = Math.min(
@@ -26770,7 +26823,7 @@ const isMatch = currentGroup.every(member => {
         if (Math.abs(memberMeta.duration - targetMeta.duration) > tolerance) return false;
     }
 
-    if (memberSize === 0 && targetSize === 0) return true;
+    if (memberSize === 0 && targetSize === 0) return false;
     if (!(memberSize > 0 && targetSize > 0)) return false;
     const sizeSimilarity = duplicateSizeSimilarity(memberSize, targetSize);
     return sizeSimilarity !== null && (1 - sizeSimilarity) <= duplicateProfile.sizeDifferenceLimit;
@@ -58539,14 +58592,8 @@ await sleep(20);
 
 S.dupReasons.clear();
 const tempDupCandidates = tempItems.filter(i => {
-if (!i.mime_type) return false;
-const isVideo = i.mime_type.startsWith('video');
-const isImage = i.mime_type.startsWith('image');
-const isOther = !isVideo && !isImage;
-if (isVideo && tempDupCfg.video) return true;
-if (isImage && tempDupCfg.image) return true;
-if (isOther && tempDupCfg.other) return true;
-return false;
+if (!i || i.kind === 'drive#folder' || i.isHeader) return false;
+return !!tempDupCfg[getDuplicateItemType(i)];
 });
 
 const tempDupGroups = await computeDuplicateGroups(tempDupCandidates, tempDupCfg, () => S.scanning && !signal.aborted && myScanId === S.scanId && isManagerViewContextCurrent(scanStartContext));
