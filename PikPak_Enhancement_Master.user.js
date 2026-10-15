@@ -13210,7 +13210,7 @@ const key = String(id || '');
 if (!key) return null;
 return S.getBrowserOverlays().find(el => el.dataset && el.dataset.pkBrowserOverlayId === key) || null;
 },
-locatePreviewSourceItem: (item = null) => {
+locatePreviewSourceItem: (item = null, preserveScroll = false) => {
 const source = item && typeof item === 'object' ? item : null;
 const id = source && String(source.id || source.file_id || '');
 const fileId = source && String(source.file_id || '');
@@ -13231,7 +13231,7 @@ S.activeId = targetId;
 S.lastSelIdx = targetIdx;
 const rowTop = getItemScrollTopByIndex(targetIdx);
 const vpHeight = UI.vp.clientHeight || 0;
-UI.vp.scrollTop = Math.max(0, rowTop - (vpHeight / 2) + (CONF.rowHeight / 2));
+if (!preserveScroll) UI.vp.scrollTop = Math.max(0, rowTop - (vpHeight / 2) + (CONF.rowHeight / 2));
 renderVisible();
 updateStat();
 return true;
@@ -14745,6 +14745,17 @@ return id;
 }
 };
 pkState = S;
+// Keep UI-only sorting/rendering in openManager; the outer prober uses this bridge.
+let durationViewTimer = null;
+S.refreshDurationView = () => {
+if (durationViewTimer) clearTimeout(durationViewTimer);
+durationViewTimer = setTimeout(() => {
+durationViewTimer = null;
+if (pkState !== S) return;
+if (S.sort === 'duration' && !S.loading && !S.scanning) refresh();
+else renderVisible();
+}, 250);
+};
 
 function isLocalSearchBackActive() {
 if (S.mobileSelectionMode || S.isStrictVirtualNavMode()) return false;
@@ -29482,6 +29493,10 @@ if (finalVirtualSortMaskSig) S.virtualSortMaskSig = finalVirtualSortMaskSig;
 
 if (currentReqId !== S.sortId) return;
 
+if (S.sort === 'duration' && !isPkBackgroundSpecialMode(S, true)) {
+for (const item of S.display) DurationProber.add(item);
+}
+
 const currentIds = new Set(S.display.filter(Boolean).map(i => i.id));
 if (S.selMode === 'all') {
 const nextExcluded = new Set();
@@ -32956,39 +32971,10 @@ if (S.shareParseInsightMode) return;
 scheduleShareParseAutoPaging(S.shareParseCurParentId || '', { force: true });
 }
 
-const AUDIO_FILE_EXTS = new Set(['mp3','wav','flac','aac','m4a','ogg','opus','ape','wma','amr','m4b','alac','aiff','aif','mid','midi','ra','dts','ac3','dsf','dff']);
-
-function getItemExt(it) {
-const name = String((it && it.name) || '').toLowerCase();
-const m = name.match(/\.([^.\/\\]+)$/);
-return m ? m[1] : '';
-}
-
-function isAudioLikeItem(it) {
-if (!it || it.isHeader || it.kind === 'drive#folder') return false;
-const m = String((it && it.mime_type) || '').toLowerCase();
-return m.startsWith('audio/') || AUDIO_FILE_EXTS.has(getItemExt(it));
-}
-
-function getAudioDirectUrl(detail) {
-if (!detail) return '';
-if (detail.web_content_link) return detail.web_content_link;
-const oct = detail.links && detail.links['application/octet-stream'];
-return (oct && oct.url) || '';
-}
-
 function getAudioPhysicalId(it) {
 if (!it) return '';
 if ((S.offlineMode && it.kind === 'drive#task') || (S.uploadMode && it.file_id)) return it.file_id || it.id || '';
 return it.id || '';
-}
-
-function isVideoLikeItem(it) {
-if (isAudioLikeItem(it)) return false;
-const m = String((it && it.mime_type) || '').toLowerCase();
-const n = String((it && it.name) || '').toLowerCase();
-const dur = Number((it && it.params && it.params.duration) || 0);
-return m.startsWith('video/') || dur > 0 || ['mp4','mkv','avi','mov','wmv','flv','webm','ts','m4v','3gp'].some(e => n.endsWith('.' + e));
 }
 
 function isExternalPlaybackVideoItem(it) {
@@ -39707,6 +39693,10 @@ end = isGridMode && gridLayout
 : Math.min(S.display.length, Math.ceil((top + h) / CONF.rowHeight) + buffer);
 }
 
+// Probe the rendered window first, including cached items that bypass minifyFile.
+if (!isPkBackgroundSpecialMode(S, true) && !S.loading && !S.scanning) {
+DurationProber.prioritize(S.display.slice(start, end));
+}
 const isBlur = isBlurEnabledForView(isGridMode ? 'grid' : 'list');
 const rootPathStr = S.path.map(p => p.name).join('/');
 const firstReadablePathIndex = !isGridMode
@@ -46192,25 +46182,6 @@ syncRefreshButtonVisibility();
 syncMobileActionbarState();
 }
 
-const PK_WEB_VOD_TS_DOWNLOADER = 'https://web-vod-xdrive.mypikpak.com/ts_downloader';
-const PK_WEB_VOD_CLIENT_ID = 'UElLUEFLX1dFQg';
-
-const buildPikPakTsHlsUrl = (rawUrl) => {
-const input = String(rawUrl || '').trim();
-if (!input) return input;
-
-if (input.includes('ts_downloader') && input.includes('url=')) {
-return input;
-}
-
-const cleanUrl = input
-.replace('&ext=.m3u8', '')
-.replace('?ext=.m3u8&', '?')
-.replace('?ext=.m3u8', '');
-
-return `${PK_WEB_VOD_TS_DOWNLOADER}?client_id=${PK_WEB_VOD_CLIENT_ID}&url=${encodeURIComponent(cleanUrl)}`;
-};
-
 const isPikPakTsDownloaderUrl = (url) => {
 const s = String(url || '');
 return s.includes('web-vod-xdrive.mypikpak.com/ts_downloader') || s.includes('/ts_downloader?');
@@ -48140,6 +48111,7 @@ target.params.duration = seconds;
 if (audioPlaylistOpen) renderAudioPlaylist();
 else updateAudioPlaylistActive();
 scheduleAudioDurationViewRefresh();
+S.refreshDurationView();
 };
 const getAudioPlaylistMeta = (it) => {
 const size = it && it.size ? fmtSize(Number(it.size)) : '';
@@ -52125,7 +52097,7 @@ pkHls.destroy();
 pkHls = null;
 }
 
-if (!d._pkSkipLocateOnDestroy) S.locatePreviewSourceItem(item);
+if (!d._pkSkipLocateOnDestroy) S.locatePreviewSourceItem(item, S.sort === 'duration');
 
 v.src = "";
 v.load();
@@ -52573,7 +52545,7 @@ gmSet('pk_duration_' + pId, seconds);
 
 S.durationMap.set(pId, seconds);
 if (item.params) item.params.duration = seconds;
-if (typeof renderVisible === 'function') renderVisible();
+S.refreshDurationView();
 }
 });
 
@@ -79940,6 +79912,7 @@ delete window.pkDeleteGhostFilesWithIndexSync;
 if (window.pkCancelCloudTargetWatch === cancelCloudTargetWatch) {
 delete window.pkCancelCloudTargetWatch;
 }
+DurationProber.reset();
 pkState = null;
 
 delete window.pkUpdateCrawlerUI;
@@ -81220,22 +81193,22 @@ window.pkGlobalIndex.dropFolders([id]);
 return changed;
 }
 
-function isPkBackgroundSpecialMode(state) {
+function isPkBackgroundSpecialMode(state, allowScopedSearch = false) {
 if (!state) return false;
 const cur = Array.isArray(state.path) && state.path.length ? state.path[state.path.length - 1] : null;
 const curId = String((cur && cur.id) || '');
 return !!(
 state.trashMode || state.shareMode || state.shareParseMode || state.linkBookmarkMode || state.historyMode ||
 state.offlineMode || state.uploadMode || state.dupMode || state.analyzeMode ||
-state.isFlattened || curId.startsWith('virtual_') || curId === 'analyze_root'
+state.isFlattened || (curId.startsWith('virtual_') && !(allowScopedSearch === true && curId === 'virtual_search_root' && state.folderSearch)) || curId === 'analyze_root'
 );
 }
 
-function isPkBackgroundPaused() {
+function isPkBackgroundPaused(allowScopedSearch = false) {
 const state = (typeof pkState !== 'undefined') ? pkState : null;
 return !!(
 isGUISensitive === true ||
-isPkBackgroundSpecialMode(state) ||
+isPkBackgroundSpecialMode(state, allowScopedSearch) ||
 (state && (state.scanning === true || state.loading === true)) ||
 document.getElementById('pk-player-ov')
 );
@@ -81268,238 +81241,264 @@ globalParentIndex.set(f.id, { id: pId, name: pName });
 }
 };
 
+const AUDIO_FILE_EXTS = new Set(['mp3','wav','flac','aac','m4a','ogg','opus','ape','wma','amr','m4b','alac','aiff','aif','mid','midi','ra','dts','ac3','dsf','dff']);
+
+function getItemExt(it) {
+const name = String((it && it.name) || '').toLowerCase();
+const m = name.match(/\.([^.\/\\]+)$/);
+return m ? m[1] : '';
+}
+
+function isAudioLikeItem(it) {
+if (!it || it.isHeader || it.kind === 'drive#folder') return false;
+const m = String((it && it.mime_type) || '').toLowerCase();
+return m.startsWith('audio/') || AUDIO_FILE_EXTS.has(getItemExt(it));
+}
+
+function getAudioDirectUrl(detail) {
+if (!detail) return '';
+if (detail.web_content_link) return detail.web_content_link;
+const oct = detail.links && detail.links['application/octet-stream'];
+return (oct && oct.url) || '';
+}
+
+function isVideoLikeItem(it) {
+if (isAudioLikeItem(it)) return false;
+const m = String((it && it.mime_type) || '').toLowerCase();
+const n = String((it && it.name) || '').toLowerCase();
+const dur = Number((it && it.params && it.params.duration) || 0);
+return m.startsWith('video/') || dur > 0 || ['mp4','mkv','avi','mov','wmv','flv','webm','ts','m4v','3gp'].some(e => n.endsWith('.' + e));
+}
+
+const PK_WEB_VOD_TS_DOWNLOADER = 'https://web-vod-xdrive.mypikpak.com/ts_downloader';
+const PK_WEB_VOD_CLIENT_ID = 'UElLUEFLX1dFQg';
+
+const buildPikPakTsHlsUrl = (rawUrl) => {
+const input = String(rawUrl || '').trim();
+if (!input) return input;
+
+if (input.includes('ts_downloader') && input.includes('url=')) {
+return input;
+}
+
+const cleanUrl = input
+.replace('&ext=.m3u8', '')
+.replace('?ext=.m3u8&', '?')
+.replace('?ext=.m3u8', '');
+
+return `${PK_WEB_VOD_TS_DOWNLOADER}?client_id=${PK_WEB_VOD_CLIENT_ID}&url=${encodeURIComponent(cleanUrl)}`;
+};
+
+function getFileDurationSeconds(file) {
+const parse = value => {
+const n = Number(value || 0);
+return Number.isFinite(n) && n > 0 ? Math.round(n) : 0;
+};
+if (!file) return 0;
+let duration = parse(file.video_media_metadata && file.video_media_metadata.duration) ||
+parse(file.audio_media_metadata && file.audio_media_metadata.duration) ||
+parse(file.params && file.params.duration);
+if (!duration && Array.isArray(file.medias)) {
+for (const media of file.medias) {
+duration = parse(media && media.duration) ||
+parse(media && media.video && media.video.duration) ||
+parse(media && media.audio && media.audio.duration);
+if (duration) break;
+}
+}
+return duration;
+}
+
+function getDurationProbeSources(detail, audio = false) {
+if (!detail) return [];
+const sources = [];
+const seen = new Set();
+const add = (url, original) => {
+const value = String(url || '').trim();
+if (!value || seen.has(value)) return;
+seen.add(value);
+sources.push({ url: value, original });
+};
+const medias = Array.isArray(detail.medias) ? detail.medias : [];
+if (!audio) {
+// Probe one small transcode first; fall back to the original file if needed.
+const transcodes = medias.filter(m => m && m.link && m.link.url &&
+!(m.is_origin === true || m.is_origin === 1 || String(m.is_origin).toLowerCase() === 'true'));
+transcodes.sort((a, b) => Number(a.video && a.video.height || a.height || 0) - Number(b.video && b.video.height || b.height || 0));
+if (transcodes.length) {
+const m = transcodes[0];
+const type = String(m.video && m.video.video_type || m.video_type || '').toLowerCase();
+add(type === 'mpegts' ? buildPikPakTsHlsUrl(m.link.url) : m.link.url, false);
+}
+}
+add(audio ? getAudioDirectUrl(detail) : detail.web_content_link, true);
+const oct = detail.links && detail.links['application/octet-stream'];
+add(typeof oct === 'string' ? oct : oct && oct.url, true);
+for (const m of medias) {
+if (!m || !m.link || !m.link.url) continue;
+if (m.is_origin === true || m.is_origin === 1 || String(m.is_origin).toLowerCase() === 'true') add(m.link.url, true);
+}
+return sources.slice(0, 3);
+}
+
 const DurationProber = (() => {
 let queue = [];
 let queuedIds = new Set();
 let failedDurationProbeSet = new Set();
-let isRunning = false;
-let probeVideo = null;
-let probeAudio = null;
+const MAX_CONCURRENT = 2;
+const START_INTERVAL = 500;
+const activeJobs = new Map();
 let loopTimer = null;
 let runToken = 0;
-let activeId = '';
+let nextStartAt = 0;
 
-const parseDuration = (value) => {
+const parseDuration = value => {
 const n = Number(value || 0);
 return Number.isFinite(n) && n > 0 ? Math.round(n) : 0;
 };
-
-const getProbeId = (item) => String((item && item.id) || '');
-
-const getKnownDuration = (item) => {
+const getState = () => typeof pkState !== 'undefined' ? pkState : null;
+const getProbeId = item => String(item && item.id || '');
+const getKnownDuration = item => {
 const id = getProbeId(item);
-return parseDuration((item && item.params && item.params.duration) || 0) ||
-parseDuration(id && S.durationMap && S.durationMap.get(id)) ||
+const state = getState();
+return getFileDurationSeconds(item) ||
+parseDuration(state && state.durationMap && state.durationMap.get(id)) ||
 parseDuration(id && gmGet('pk_duration_' + id, 0));
 };
-
-const isProbeAudio = (item) => typeof isAudioLikeItem === 'function' && isAudioLikeItem(item);
-const isProbeVideo = (item) => typeof isVideoLikeItem === 'function' && isVideoLikeItem(item);
-const isProbeMedia = (item) => isProbeAudio(item) || isProbeVideo(item);
-
 const shouldProbe = (item, isBackground = false) => {
 const id = getProbeId(item);
-if (!item || !id || item._pkSkipDurationProbe || item.isHeader || item.kind === 'drive#folder') return false;
+if (!getState() || !item || !id || item._pkSkipDurationProbe || item.isHeader || item.kind === 'drive#folder') return false;
 if (isBackground || failedDurationProbeSet.has(id) || getKnownDuration(item) > 0) return false;
-return isProbeMedia(item);
+return isAudioLikeItem(item) || isVideoLikeItem(item);
 };
 
-const getProbeElement = (audio) => {
-if (audio) {
-if (!probeAudio) {
-probeAudio = document.createElement('audio');
-probeAudio.preload = 'metadata';
-probeAudio.muted = true;
-probeAudio.crossOrigin = 'anonymous';
-probeAudio.referrerPolicy = 'no-referrer';
-probeAudio.style.display = 'none';
-}
-return probeAudio;
-}
-if (!probeVideo) {
-probeVideo = document.createElement('video');
-probeVideo.muted = true;
-probeVideo.preload = 'metadata';
-probeVideo.style.display = 'none';
-}
-return probeVideo;
-};
-
-const clearProbeElement = (el) => {
-if (!el) return;
-el.removeAttribute('src');
-try { el.load(); } catch (e) {}
-};
-
-const markFailed = (item) => {
+const saveAndNotify = (item, duration) => {
 const id = getProbeId(item);
-if (id) failedDurationProbeSet.add(id);
-};
-
-const syncDurationToItem = (target, id, dur) => {
-if (!target || target.id !== id) return;
-if (!target.params) target.params = {};
-target.params.duration = dur;
-};
-
-const syncDurationEverywhere = (id, dur) => {
-if (!id || !(dur > 0)) return;
-if (S.durationMap) S.durationMap.set(id, dur);
-if (S.itemMap && S.itemMap.get(id)) syncDurationToItem(S.itemMap.get(id), id, dur);
-[S.items, S.display].forEach(list => Array.isArray(list) && list.forEach(i => syncDurationToItem(i, id, dur)));
-if (typeof pkState !== 'undefined' && pkState) {
-if (pkState.itemMap && pkState.itemMap.get(id)) syncDurationToItem(pkState.itemMap.get(id), id, dur);
-[pkState.items, pkState.display].forEach(list => Array.isArray(list) && list.forEach(i => syncDurationToItem(i, id, dur)));
-}
-};
-
-const notifyDurationSaved = (id, dur) => {
-try {
-document.dispatchEvent(new CustomEvent('pk-duration-saved', { detail: { id, duration: dur } }));
-} catch (e) {}
-};
-
-const startNext = async () => {
-if (!isRunning || queue.length === 0) { isRunning = false; return; }
-
-const currentToken = runToken;
-
-if (isPkBackgroundPaused()) {
-if (loopTimer) clearTimeout(loopTimer);
-loopTimer = setTimeout(startNext, 2000);
-return;
-}
-
-const item = queue.shift();
-const itemId = getProbeId(item);
-if (itemId) queuedIds.delete(itemId);
-
-if (!shouldProbe(item, false)) {
-loopTimer = setTimeout(startNext, 0);
-return;
-}
-
-activeId = itemId;
-const isAudioProbe = isProbeAudio(item);
-const probeEl = getProbeElement(isAudioProbe);
-let watchdog = null;
-let cleaned = false;
-const currentMedia = probeEl;
-
-const cleanup = (failed = false) => {
-if (cleaned) return;
-cleaned = true;
-if (watchdog) clearTimeout(watchdog);
-if (currentMedia) {
-currentMedia.removeEventListener('loadedmetadata', onLoaded);
-currentMedia.removeEventListener('error', onError);
-clearProbeElement(currentMedia);
-}
-if (failed) markFailed(item);
-activeId = '';
-if (isRunning && currentToken === runToken) {
-loopTimer = setTimeout(startNext, 1500);
-}
-};
-
-const saveAndNotify = (targetItem, dur) => {
-if (targetItem && targetItem._pkSkipDurationProbe) return;
-const id = getProbeId(targetItem);
-const seconds = parseDuration(dur);
-if (!id || !(seconds > 0)) return;
-
+const seconds = parseDuration(duration);
+if (!id || !seconds || item._pkSkipDurationProbe) return;
 gmSet('pk_duration_' + id, seconds);
-syncDurationEverywhere(id, seconds);
-notifyDurationSaved(id, seconds);
-
-if (typeof pkState !== 'undefined' && pkState) {
-if (pkState.historyMode) return;
-
-const safeId = window.CSS && CSS.escape ? CSS.escape(id) : id.replace(/"/g, '\\"');
-const row = document.querySelector(`.pk-row[data-id="${safeId}"]`);
-if (row) {
-const cols = row.children;
-const durCol = cols.length > 1 ? cols[cols.length - 2] : null;
-
-if (durCol) {
-durCol.style.color = 'var(--pk-pri)';
-durCol.textContent = fmtDur(seconds);
-setTimeout(() => { if(durCol) durCol.style.color = ''; }, 2000);
+const state = getState();
+const sync = target => {
+if (!target || String(target.id || '') !== id) return;
+if (!target.params) target.params = {};
+target.params.duration = seconds;
+};
+if (state) {
+if (state.durationMap) state.durationMap.set(id, seconds);
+if (state.itemMap) sync(state.itemMap.get(id));
+[state.items, state.display].forEach(list => Array.isArray(list) && list.forEach(sync));
+if (typeof state.refreshDurationView === 'function') state.refreshDurationView();
 }
-}
-if (typeof renderVisible === 'function') renderVisible();
-}
+document.dispatchEvent(new CustomEvent('pk-duration-saved', { detail: { id, duration: seconds } }));
 };
 
-const onLoaded = () => {
-if (currentToken === runToken) {
-const dur = parseDuration(currentMedia && currentMedia.duration);
-if (dur > 0) {
-saveAndNotify(item, dur);
-cleanup(false);
-return;
-}
-}
-cleanup(true);
-};
-
-const onError = () => { cleanup(true); };
-
-currentMedia.addEventListener('loadedmetadata', onLoaded);
-currentMedia.addEventListener('error', onError);
-
+const fetchTimed = async (url, options, parentSignal) => {
+const controller = new AbortController();
+const abort = () => controller.abort();
+parentSignal.addEventListener('abort', abort, { once: true });
+if (parentSignal.aborted) controller.abort();
+const timer = setTimeout(abort, 15000);
 try {
-const res = await apiGet(item.id);
+const { read, ...requestOptions } = options;
+const response = await fetch(url, { ...requestOptions, signal: controller.signal });
+if (!response.ok) throw new Error('Duration probe HTTP ' + response.status);
+// Keep the timeout active until the response body has been consumed.
+return await read(response);
+} finally {
+clearTimeout(timer);
+parentSignal.removeEventListener('abort', abort);
+}
+};
 
-if (currentToken !== runToken) { cleanup(); return; }
-const url = isAudioProbe && typeof getAudioDirectUrl === 'function'
-? getAudioDirectUrl(res)
-: (res && res.web_content_link);
-if (!res || !url) { cleanup(true); return; }
-
-const nameLower = (item.name || '').toLowerCase();
-const urlLower = url.toLowerCase();
-
-const isM3u8 = nameLower.endsWith('.m3u8') || urlLower.includes('.m3u8');
-const isWmv = nameLower.endsWith('.wmv') || urlLower.includes('.wmv') || nameLower.endsWith('.asf') || urlLower.includes('.asf');
-const isAvi = nameLower.endsWith('.avi') || urlLower.includes('.avi') || nameLower.endsWith('.divx') || urlLower.includes('.divx');
-const isFlv = nameLower.endsWith('.flv') || urlLower.includes('.flv');
-const isMkv = nameLower.endsWith('.mkv') || urlLower.includes('.mkv');
-const isRmvb = nameLower.endsWith('.rmvb') || urlLower.includes('.rmvb') || nameLower.endsWith('.rm') || urlLower.includes('.rm');
-
-if (!isAudioProbe && isM3u8) {
-const fetchOptions = window.AbortSignal ? { signal: AbortSignal.timeout(15000) } : {};
-const text = await fetch(url, fetchOptions).then(r => r.text());
-let saved = false;
-
-if (currentToken === runToken) {
-const matches = text.matchAll(/#EXTINF:([\d.]+)/g);
+const probePlaylist = async (url, signal) => {
+const playlist = await fetchTimed(url, { read: response => response.text() }, signal);
+if (!playlist.trimStart().startsWith('#EXTM3U')) return 0;
+if (/#EXT-X-ENDLIST\b/.test(playlist)) {
 let total = 0;
-for (const m of matches) total += parseFloat(m[1]);
-if (total > 0) {
-saveAndNotify(item, Math.round(total));
-saved = true;
+for (const match of playlist.matchAll(/#EXTINF:([\d.]+)/g)) total += Number(match[1]);
+return parseDuration(total);
 }
+// A master playlist contains variants, not media durations. Read one media playlist.
+const lines = playlist.split(/\r?\n/).map(line => line.trim());
+const variants = [];
+for (let i = 0; i < lines.length; i++) {
+if (!lines[i].startsWith('#EXT-X-STREAM-INF:')) continue;
+const match = lines[i].match(/(?:[:,])BANDWIDTH=(\d+)/);
+let next = i + 1;
+while (next < lines.length && (!lines[next] || lines[next].startsWith('#'))) next++;
+if (next < lines.length) variants.push({ url: new URL(lines[next], url).href, bandwidth: Number(match && match[1] || 0) });
 }
-cleanup(!saved);
-}
-else if (!isAudioProbe && (isWmv || isAvi || isFlv || isMkv || isRmvb)) {
-const rangeEnd = isMkv ? 65535 : 8191;
-const fetchOptions = {
-headers: { 'Range': `bytes=0-${rangeEnd}` },
-...(window.AbortSignal ? { signal: AbortSignal.timeout(15000) } : {})
+if (!variants.length) return 0;
+variants.sort((a, b) => a.bandwidth - b.bandwidth);
+const media = await fetchTimed(variants[0].url, { read: response => response.text() }, signal);
+if (!media.trimStart().startsWith('#EXTM3U') || !/#EXT-X-ENDLIST\b/.test(media)) return 0;
+let total = 0;
+for (const match of media.matchAll(/#EXTINF:([\d.]+)/g)) total += Number(match[1]);
+return parseDuration(total);
 };
-let saved = false;
 
-try {
-const response = await fetch(url, fetchOptions);
-if (currentToken === runToken && (response.ok || response.status === 206)) {
-const buffer = await response.arrayBuffer();
+const probeNativeMedia = (url, audio, signal) => new Promise(resolve => {
+const media = document.createElement(audio ? 'audio' : 'video');
+media.preload = 'metadata';
+media.muted = true;
+let timer = null;
+let finished = false;
+const finish = duration => {
+if (finished) return;
+finished = true;
+clearTimeout(timer);
+media.removeEventListener('loadedmetadata', loaded);
+media.removeEventListener('durationchange', loaded);
+media.removeEventListener('error', failed);
+signal.removeEventListener('abort', failed);
+media.removeAttribute('src');
+try { media.load(); } catch (e) {}
+resolve(parseDuration(duration));
+};
+const loaded = () => {
+const duration = parseDuration(media.duration);
+if (duration) finish(duration);
+};
+const failed = () => finish(0);
+media.addEventListener('loadedmetadata', loaded);
+media.addEventListener('durationchange', loaded);
+media.addEventListener('error', failed);
+signal.addEventListener('abort', failed, { once: true });
+if (signal.aborted) { finish(0); return; }
+timer = setTimeout(failed, 15000);
+try { media.src = url; media.load(); } catch (e) { finish(0); }
+});
+
+const probeSource = async (item, source, audio, signal) => {
+const url = source.url;
+const urlLower = url.toLowerCase();
+// A transcode's container can differ from the original filename.
+const nameLower = source.original ? String(item.name || '').toLowerCase() : '';
+const isM3u8 = nameLower.endsWith('.m3u8') || urlLower.includes('.m3u8') || urlLower.includes('/ts_downloader?');
+const isWmv = nameLower.endsWith('.wmv') || nameLower.endsWith('.asf');
+const isAvi = nameLower.endsWith('.avi') || nameLower.endsWith('.divx');
+const isFlv = nameLower.endsWith('.flv');
+const isMkv = nameLower.endsWith('.mkv');
+const isRmvb = nameLower.endsWith('.rmvb') || nameLower.endsWith('.rm');
+if (!audio && isM3u8) return probePlaylist(url, signal);
+if (!audio && (isWmv || isAvi || isFlv || isMkv || isRmvb)) {
+const rangeEnd = isMkv ? 65535 : 8191;
+const buffer = await fetchTimed(url, {
+headers: { Range: `bytes=0-${rangeEnd}` },
+read: async response => {
+// Stop rather than download the whole original when a server ignores Range.
+const length = Number(response.headers.get('content-length') || 0);
+if (response.status !== 206 && !(length > 0 && length <= rangeEnd + 1)) {
+if (response.body) await response.body.cancel();
+throw new Error('Duration probe Range unsupported');
+}
+return response.arrayBuffer();
+}
+}, signal);
 const view = new DataView(buffer);
 const bytes = new Uint8Array(buffer);
 let seconds = 0;
 let formatName = '';
-
 if (isWmv) {
     formatName = nameLower.endsWith('.asf') ? 'ASF' : 'WMV';
     const guid = [0xA1, 0xDC, 0xAB, 0x8C, 0x47, 0xA9, 0xCF, 0x11, 0x8E, 0xE4, 0x00, 0xC0, 0x0C, 0x20, 0x53, 0x65];
@@ -81577,70 +81576,106 @@ if (isWmv) {
     }
 }
 
-if (seconds > 0) {
-    saveAndNotify(item, Math.round(seconds));
-    saved = true;
+return parseDuration(seconds);
+}
+return probeNativeMedia(url, audio, signal);
+};
+
+const probeItem = async (item, job) => {
+const id = getProbeId(item);
+const { token, controller } = job;
+let duration = 0;
+const detailTimer = setTimeout(() => controller.abort(), 15000);
+try {
+const detail = await apiGet(id, { signal: controller.signal });
+clearTimeout(detailTimer);
+if (token !== runToken || controller.signal.aborted) return;
+duration = getFileDurationSeconds(detail);
+if (!duration) {
+const audio = isAudioLikeItem(item);
+for (const source of getDurationProbeSources(detail, audio)) {
+if (token !== runToken || controller.signal.aborted) return;
+try { duration = await probeSource(item, source, audio, controller.signal); } catch (e) {}
+if (duration > 0) break;
 }
 }
-} catch (e) {}
-cleanup(!saved);
+if (token === runToken && !controller.signal.aborted && duration > 0) saveAndNotify(item, duration);
+} catch (e) {
+// Give the API breathing room if increased throughput reaches its rate limit.
+if (token === runToken && Number(e.status || e.statusCode) === 429) {
+nextStartAt = Math.max(nextStartAt, Date.now() + 30000);
 }
-else {
-if (document.hidden) {
-queue.unshift(item);
-if (itemId) queuedIds.add(itemId);
-isRunning = false;
-cleanup();
+} finally {
+clearTimeout(detailTimer);
+if (token === runToken && activeJobs.get(id) === job) {
+if (!(duration > 0)) failedDurationProbeSet.add(id);
+activeJobs.delete(id);
+startNext();
+}
+}
+};
+
+const startNext = () => {
+if (loopTimer !== null) clearTimeout(loopTimer);
+loopTimer = null;
+if (!queue.length || activeJobs.size >= MAX_CONCURRENT) return;
+if (isPkBackgroundPaused(true) || document.hidden) {
+loopTimer = setTimeout(startNext, 2000);
 return;
 }
-
-watchdog = setTimeout(() => {
-cleanup(true);
-}, 15000);
-
-currentMedia.src = url;
-currentMedia.load();
+const wait = nextStartAt - Date.now();
+if (wait > 0) { loopTimer = setTimeout(startNext, wait); return; }
+let item;
+while (queue.length) {
+item = queue.shift();
+queuedIds.delete(getProbeId(item));
+if (shouldProbe(item)) break;
+item = null;
 }
-} catch(e) {
-cleanup(true);
-}
+if (!item) return;
+const job = { token: runToken, controller: new AbortController() };
+activeJobs.set(getProbeId(item), job);
+nextStartAt = Date.now() + START_INTERVAL;
+void probeItem(item, job);
+if (queue.length && activeJobs.size < MAX_CONCURRENT) loopTimer = setTimeout(startNext, START_INTERVAL);
+};
+
+const enqueue = (item, isBackground = false) => {
+const id = getProbeId(item);
+if (!id || queuedIds.has(id) || activeJobs.has(id) || !shouldProbe(item, isBackground)) return;
+queue.push(item);
+queuedIds.add(id);
 };
 
 return {
 add: (item, isBackground = false) => {
-if (!shouldProbe(item, isBackground)) return;
-const id = getProbeId(item);
-if (queuedIds.has(id) || activeId === id) return;
-if (isBackground) {
-queue.push(item);
-} else {
-queue.unshift(item);
-}
-queuedIds.add(id);
-if (!isRunning) { isRunning = true; startNext(); }
-},
-checkAndRun: () => {
-if (!isRunning && queue.length > 0) {
-isRunning = true;
+enqueue(item, isBackground);
 startNext();
-}
 },
+prioritize: items => {
+const ranks = new Map();
+items.forEach((item, index) => {
+enqueue(item);
+const id = getProbeId(item);
+if (id && !ranks.has(id)) ranks.set(id, index);
+});
+const preferred = [], remaining = [];
+for (const item of queue) (ranks.has(getProbeId(item)) ? preferred : remaining).push(item);
+preferred.sort((a, b) => ranks.get(getProbeId(a)) - ranks.get(getProbeId(b)));
+queue = preferred.concat(remaining);
+startNext();
+},
+checkAndRun: startNext,
 reset: () => {
 runToken++;
+for (const job of activeJobs.values()) job.controller.abort();
+activeJobs.clear();
 queue = [];
 queuedIds = new Set();
 failedDurationProbeSet = new Set();
-activeId = '';
-isRunning = false;
-if (loopTimer) clearTimeout(loopTimer);
-if (probeVideo) {
-clearProbeElement(probeVideo);
-probeVideo = null;
-}
-if (probeAudio) {
-clearProbeElement(probeAudio);
-probeAudio = null;
-}
+nextStartAt = 0;
+if (loopTimer !== null) clearTimeout(loopTimer);
+loopTimer = null;
 }
 };
 })();
@@ -81653,17 +81688,7 @@ const trashed = !!f.trashed;
 const tags = f.tags ? [...f.tags] : [];
 const lineage = f._lineage ? [...f._lineage] : undefined;
 const isStarred = !!(f.starred || f.star || f.is_star || (tags.some(t => t.name === 'STAR')));
-let duration = 0;
-const parse = (v) => { if (!v) return 0; const n = parseInt(v, 10); return isNaN(n) ? 0 : n; };
-if (f.video_media_metadata?.duration) duration = parse(f.video_media_metadata.duration);
-if (!duration && f.audio_media_metadata?.duration) duration = parse(f.audio_media_metadata.duration);
-if (!duration && f.medias && Array.isArray(f.medias)) {
-for (const m of f.medias) {
-const d = m.duration ? parse(m.duration) : (m.video?.duration ? parse(m.video.duration) : 0);
-if (d > 0) { duration = d; break; }
-}
-}
-if (!duration && f.params?.duration) duration = parse(f.params.duration);
+let duration = getFileDurationSeconds(f);
 let final_modified_time = f.modified_time;
 const skipDurationProbe = !!f._pkSkipDurationProbe;
 const skipNewDurationProbe = skipDurationProbe || isBackground || trashed;
