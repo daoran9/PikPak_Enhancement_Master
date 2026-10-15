@@ -3093,7 +3093,7 @@ return value.replace(/\s*(?:Ctrl|Command|⌘)\s*\+\s*F\b/gi, '').trim();
 
 function syncSearchClearVisibility(input, clear) {
 if (!input) return false;
-const hasValue = !!String(input.value || '').trim();
+const hasValue = !!String(input.value || '').trim() || !!(input.id === 'pk-search-input' && pkState && pkState.folderSearch);
 const wrap = typeof input.closest === 'function' ? input.closest('.pk-search') : input.parentNode;
 if (wrap && wrap.classList) wrap.classList.toggle('has-value', hasValue);
 if (clear && !isMobileManagerEnvironment()) clear.style.display = hasValue ? 'flex' : 'none';
@@ -15495,6 +15495,56 @@ ${CONF.icons.search || '<svg viewBox="0 0 24 24" fill="none" stroke="currentColo
 <svg id="pk-search-btn" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
 <div class="pk-hist-pop" id="pk-search-hist"></div>
 </div>
+
+<style>
+/* The grid header also uses z-index 30; lift the search bar while its popup is open. */
+#pk-top-bar:has(#pk-folder-search-controls[open]) { z-index:50!important; }
+#pk-folder-search-controls { position:relative; flex:0 0 auto; color:var(--pk-fg); font-size:14px; line-height:1.5; }
+#pk-folder-search-controls, #pk-folder-search-controls * { box-sizing:border-box; }
+#pk-folder-search-controls > summary { padding:8px 10px; cursor:pointer; white-space:nowrap; border-radius:6px; }
+#pk-folder-search-controls > summary:hover { background:var(--pk-hl); }
+#pk-folder-search-controls .pk-folder-search-panel { position:absolute; right:0; top:calc(100% + 6px); width:min(360px,calc(100vw - 32px)); max-height:calc(100dvh - 120px); overflow:auto; padding:18px; border:1px solid var(--pk-bd); border-radius:12px; background:var(--pk-bg); color:var(--pk-fg); box-shadow:0 8px 24px rgba(0,0,0,.15); z-index:20; }
+#pk-folder-search-controls .pk-folder-search-heading { display:block; margin:0 0 6px; font-size:12px; font-weight:500; opacity:.7; }
+#pk-folder-search-scope { display:block; font-size:14px; font-weight:600; line-height:1.5; overflow-wrap:anywhere; }
+#pk-folder-search-controls .pk-folder-search-check { display:flex; align-items:center; gap:10px; min-height:44px; margin:4px 0 0; padding:0; font-size:14px; line-height:1.5; cursor:pointer; }
+#pk-folder-search-controls .pk-folder-search-check input { flex:0 0 18px; width:18px; height:18px; margin:0; accent-color:var(--pk-pri); cursor:pointer; }
+#pk-folder-search-controls .pk-folder-search-types { margin-top:12px; padding-top:14px; border-top:1px solid var(--pk-bd); }
+#pk-folder-search-controls .pk-folder-search-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; }
+/* Independent classes avoid upstream toolbar rules that collapse .pk-btn to icon width. */
+#pk-folder-search-controls .pk-folder-search-choice, #pk-folder-search-apply { display:flex; align-items:center; justify-content:center; width:100%; min-width:0; min-height:44px; height:auto; margin:0; padding:8px; border:1px solid var(--pk-bd); border-radius:8px; background:var(--pk-bg); color:var(--pk-fg); font:inherit; font-size:14px; font-weight:500; line-height:1.4; text-align:center; white-space:nowrap; overflow:visible; cursor:pointer; }
+#pk-folder-search-controls .pk-folder-search-choice:hover { background:var(--pk-hl); }
+#pk-folder-search-controls .pk-folder-search-choice[aria-pressed="true"] { border-color:var(--pk-pri); background:var(--pk-pri); color:#fff; font-weight:600; }
+#pk-folder-search-controls .pk-folder-search-footer { margin-top:12px; padding-top:14px; border-top:1px solid var(--pk-bd); }
+#pk-folder-search-status { margin-bottom:12px; font-size:13px; line-height:1.5; opacity:.7; overflow-wrap:anywhere; }
+#pk-folder-search-apply { border-color:var(--pk-pri); background:var(--pk-pri); color:#fff; font-weight:600; }
+#pk-folder-search-apply:hover { filter:brightness(1.08); }
+#pk-folder-search-controls :is(summary,button,input):focus-visible { outline:2px solid var(--pk-pri); outline-offset:3px; }
+@media (max-width:360px) { #pk-folder-search-controls .pk-folder-search-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+</style>
+<details id="pk-folder-search-controls">
+<summary>搜索筛选</summary>
+<div class="pk-folder-search-panel">
+<span class="pk-folder-search-heading">搜索范围</span>
+<span id="pk-folder-search-scope">当前文件夹</span>
+<label class="pk-folder-search-check"><input id="pk-folder-search-recursive" type="checkbox" checked><span>包含子文件夹</span></label>
+<div class="pk-folder-search-types">
+<span class="pk-folder-search-heading">文件类型</span>
+<div class="pk-folder-search-grid" role="group" aria-label="搜索文件类型">
+<button type="button" class="pk-folder-search-choice" data-folder-search-cat="all" aria-pressed="true">全部类型</button>
+<button type="button" class="pk-folder-search-choice" data-folder-search-cat="audio" aria-pressed="false">音乐</button>
+<button type="button" class="pk-folder-search-choice" data-folder-search-cat="image" aria-pressed="false">图片</button>
+<button type="button" class="pk-folder-search-choice" data-folder-search-cat="video" aria-pressed="false">视频</button>
+<button type="button" class="pk-folder-search-choice" data-folder-search-cat="folder" aria-pressed="false">文件夹</button>
+</div>
+</div>
+<label class="pk-folder-search-check"><input id="pk-folder-search-starred" type="checkbox"><span>已加星标</span></label>
+<div class="pk-folder-search-footer">
+<div id="pk-folder-search-status" role="status" aria-atomic="true">首次搜索可能需要一点时间。</div>
+<button type="button" id="pk-folder-search-apply">搜索</button>
+</div>
+</div>
+</details>
+
 </div>
 
 <button class="pk-btn" id="pk-export" data-pk-tip="${L.tip_export}" disabled>
@@ -22177,7 +22227,7 @@ const path = Array.isArray(S.path) ? S.path : [];
 const cur = path.length ? path[path.length - 1] : null;
 const curId = String((cur && cur.id) || '');
 
-const isSearchResultRoot = curId === 'virtual_search_root';
+const isSearchResultRoot = curId === 'virtual_search_root' && !S.folderSearch;
 const isFileInsightResult = !!S.isFlattened || curId === 'file_insight';
 const isFileDupResult = !!S.dupMode || curId === 'file_dup';
 
@@ -27176,6 +27226,7 @@ syncSearchClearVisibility(UI.searchInput, UI.searchClear);
 UI.searchClear.style.display = String(UI.searchInput.value || '').trim() ? 'flex' : 'none';
 }
 }
+if (S.syncFolderSearchControls) S.syncFolderSearchControls();
 
 if (cur.id === 'virtual_search_root') {
 if (typeof applyResolvedViewMode === 'function') applyResolvedViewMode('global_search');
@@ -28440,6 +28491,7 @@ showAlert(`${L.str_failed} ${formatCloudErrorMessage(e)}`);
 }
 
 async function refresh() {
+if (S.syncFolderSearchControls) S.syncFolderSearchControls();
 S.sortId++;
 const currentReqId = S.sortId;
 syncLocalUploadVisibility();
@@ -28578,7 +28630,15 @@ UI.btnPaste.style.display = isPasteBlocked ? 'none' : (S.trashMode ? 'none' : 'i
 const isInVirtualSearch = S.path.some(p => p.id === 'virtual_search_root');
 const isInsideSearchResult = isInVirtualSearch && cur.id !== 'virtual_search_root';
 
-if (S.search && !S.dupMode && !isInsideSearchResult) {
+if (S.folderSearch && cur.id === 'virtual_search_root') {
+const scoped = S.folderSearch;
+S.display = filterFolderSearchItems(scoped.items, scoped.query, scoped.category, scoped.starredOnly);
+S.items = [...S.display];
+S.lastGlobalResults = [...S.display];
+ensureItemMap();
+renderCrumb();
+}
+else if (S.search && !S.dupMode && !isInsideSearchResult) {
 const q = S.search.toLowerCase();
 const includePath = UI.chkSearchPath && UI.chkSearchPath.checked;
 
@@ -43703,6 +43763,7 @@ if (!patchedTarget || returnedFiles.length < successItems.length) transferRevali
 
 if (typeof pkState !== 'undefined' && pkState && pkState.lastGlobalResults) {
 pkState.lastGlobalResults = pkState.lastGlobalResults.filter(x => !movedSet.has(x.id));
+if (pkState.folderSearch) pkState.folderSearch.items = pkState.folderSearch.items.filter(x => !movedSet.has(x.id));
 }
 } else {
 const targetFallback = isNormalHomeFolderContext(targetPid) ? S.items : null;
@@ -57009,6 +57070,151 @@ UI.searchHist.style.display = 'none';
 };
 });
 };
+
+// Scoped search is independent of file analysis and never builds a full-drive index.
+let folderSearchSeq = 0;
+let folderSearchController = null;
+let folderSearchPathKey = '';
+const folderSearchConfig = { category: 'all', starredOnly: false };
+const folderSearchControls = el.querySelector('#pk-folder-search-controls');
+const folderSearchRecursive = el.querySelector('#pk-folder-search-recursive');
+const folderSearchStarred = el.querySelector('#pk-folder-search-starred');
+const folderSearchStatus = el.querySelector('#pk-folder-search-status');
+const folderSearchScope = el.querySelector('#pk-folder-search-scope');
+const folderSearchButtons = [...el.querySelectorAll('[data-folder-search-cat]')];
+const folderSearchModesAllowed = () => !(
+S.trashMode || S.shareMode || S.shareParseMode || S.linkBookmarkMode || S.starredMode ||
+S.recentMode || S.historyMode || S.offlineMode || S.uploadMode || S.isFlattened || S.dupMode || S.analyzeMode
+);
+const folderSearchCurrentPathKey = () => JSON.stringify(S.path.map(node => String(node.id || '')));
+
+function cancelFolderSearch() {
+folderSearchSeq++;
+if (folderSearchController) folderSearchController.abort();
+folderSearchController = null;
+folderSearchPathKey = '';
+}
+function syncFolderSearchControls() {
+if (!folderSearchControls) return;
+const cur = S.path[S.path.length - 1] || { id: '' };
+const inSearch = S.path.some(node => node.id === 'virtual_search_root');
+const atScopedRoot = cur.id === 'virtual_search_root' && !!S.folderSearch;
+const allowed = folderSearchModesAllowed() && (!inSearch || atScopedRoot) && !(UI.chkGlobal && UI.chkGlobal.checked);
+folderSearchControls.style.display = allowed ? '' : 'none';
+if (folderSearchController && (!folderSearchModesAllowed() || folderSearchPathKey !== folderSearchCurrentPathKey())) {
+cancelFolderSearch();
+}
+if (!inSearch && S.folderSearch) S.folderSearch = null;
+const path = atScopedRoot ? S.folderSearch.path : S.path;
+const name = path[path.length - 1]?.name || L.btn_nav_home;
+folderSearchScope.textContent = name;
+folderSearchButtons.forEach(button => {
+const selected = button.dataset.folderSearchCat === folderSearchConfig.category;
+button.setAttribute('aria-pressed', String(selected));
+button.style.background = selected ? 'var(--pk-pri)' : '';
+button.style.color = selected ? '#fff' : '';
+});
+}
+
+async function performFolderSearch(value, force = false) {
+if (!folderSearchModesAllowed() || pkState !== S) return;
+const cur = S.path[S.path.length - 1] || { id: '' };
+if (S.path.some(node => node.id === 'virtual_search_root') && !(cur.id === 'virtual_search_root' && S.folderSearch)) return;
+const query = String(value || '').trim();
+const path = S.folderSearch && cur.id === 'virtual_search_root' ? S.folderSearch.path.map(node => ({ ...node })) : S.path.map(node => ({ ...node }));
+const root = path[path.length - 1];
+const includeChildren = folderSearchRecursive.checked;
+const category = folderSearchConfig.category;
+const starredOnly = folderSearchConfig.starredOnly;
+cancelFolderSearch();
+const seq = folderSearchSeq;
+folderSearchPathKey = folderSearchCurrentPathKey();
+const contextKey = folderSearchPathKey;
+const isCurrent = () => seq === folderSearchSeq && pkState === S && folderSearchModesAllowed() && contextKey === folderSearchCurrentPathKey();
+const controller = new AbortController();
+folderSearchController = controller;
+stopLiveManualRefreshBeforePathChange('scoped_search');
+setLoad(true, false, DEFERRED_LOAD_MASK_DELAY);
+UI.stopBtn.onclick = () => {
+cancelFolderSearch();
+folderSearchStatus.textContent = '搜索已停止，保留原列表。';
+setLoad(false);
+};
+folderSearchStatus.textContent = '正在读取目录清单…';
+try {
+const items = await collectFolderSearchItems({ id: root.id || '', name: root.name, lineage: path }, async (id, node, signal) => {
+let files;
+if (window.pkGlobalIndex) files = await window.pkGlobalIndex.ensureFolder(id, {
+signal, force, background: false, name: node.name, lineage: node.lineage
+});
+else {
+const key = id || 'root';
+const cached = globalCache.get(id) || globalCache.get(key);
+if (!force && Array.isArray(cached)) files = cached;
+else {
+files = await apiList(id, 1000, null, signal, false, true);
+globalCache.set(id, files);
+}
+}
+if (!signal.aborted && Array.isArray(files)) {
+if (typeof indexParents === 'function') indexParents(id, node.name, files);
+if (typeof globalLineageMap !== 'undefined') globalLineageMap.set(id, node.lineage);
+}
+return files;
+}, controller.signal, includeChildren, progress => {
+if (!isCurrent()) return;
+const text = `已读取 ${progress.folders} 个文件夹，${progress.items} 个项目`;
+folderSearchStatus.textContent = text;
+updateLoadTxt(text);
+});
+if (!isCurrent()) return;
+S.folderSearch = { items, query, category, starredOnly, path, includeChildren };
+S.preSearchPath = path.map(node => ({ ...node }));
+S.lastSearchGlobal = false;
+if (UI.chkGlobal) UI.chkGlobal.checked = false;
+S.search = query;
+if (query) saveHistory(query);
+S.sel.clear();
+S.path = [{ id: '', name: L.btn_nav_home }, { id: 'virtual_search_root', name: `在「${root.name || L.btn_nav_home}」内搜索` }];
+folderSearchController = null;
+folderSearchPathKey = '';
+await refresh();
+// Empty-keyword classification is still an active search and must offer an exit.
+UI.searchClear.style.display = 'flex';
+folderSearchStatus.textContent = `找到 ${S.display.length} 个项目`;
+folderSearchControls.open = false;
+} catch (error) {
+if (isCurrent() && error.name !== 'AbortError') {
+folderSearchStatus.textContent = '搜索未完成，请重试。';
+showAlert(`目录搜索失败：${formatCloudErrorMessage(error)}`);
+}
+} finally {
+if (seq === folderSearchSeq && pkState === S && (folderSearchController === controller || S.folderSearch)) {
+folderSearchController = null;
+folderSearchPathKey = '';
+if (contextKey === folderSearchCurrentPathKey() || S.path[S.path.length - 1]?.id === 'virtual_search_root') setLoad(false);
+}
+}
+}
+const applyFolderSearchControls = () => {
+cancelSharePhraseSearchLookup();
+if (UI.chkGlobal) UI.chkGlobal.checked = false;
+syncFolderSearchControls();
+void performFolderSearch(UI.searchInput.value);
+};
+folderSearchButtons.forEach(button => button.onclick = () => {
+folderSearchConfig.category = button.dataset.folderSearchCat;
+applyFolderSearchControls();
+});
+folderSearchRecursive.onchange = applyFolderSearchControls;
+folderSearchStarred.onchange = () => {
+folderSearchConfig.starredOnly = folderSearchStarred.checked;
+applyFolderSearchControls();
+};
+el.querySelector('#pk-folder-search-apply').onclick = applyFolderSearchControls;
+folderSearchControls.ontoggle = () => { if (folderSearchControls.open) syncFolderSearchControls(); };
+S.syncFolderSearchControls = syncFolderSearchControls;
+
 const performSearch = (val) => {
 const txt = val.trim();
 if (!txt) {
@@ -57128,6 +57334,11 @@ sharePhraseLookupController = null;
 async function submitSearch(val) {
 const text = String(val || '').trim();
 cancelSharePhraseSearchLookup();
+if (folderSearchModesAllowed() && !(UI.chkGlobal && UI.chkGlobal.checked) &&
+(S.folderSearch || folderSearchRecursive.checked || folderSearchConfig.category !== 'all' || folderSearchConfig.starredOnly)) {
+await performFolderSearch(val);
+return;
+}
 if (!text || S.shareParseMode) {
 performSearch(val);
 return;
@@ -57369,14 +57580,19 @@ if (UI.searchClear) {
 UI.searchClear.onclick = async () => {
 const wasGlobalChecked = UI.chkGlobal ? UI.chkGlobal.checked : false;
 
-if (!S.search && UI.searchInput.value) {
+if (!S.search && !S.folderSearch && UI.searchInput.value) {
 UI.searchInput.value = '';
 syncSearchClearVisibility(UI.searchInput, UI.searchClear);
 UI.searchInput.focus();
 return;
 }
 
-const searchWasActive = !!S.search;
+const searchWasActive = !!(S.search || S.folderSearch);
+cancelFolderSearch();
+S.folderSearch = null;
+folderSearchConfig.category = 'all';
+folderSearchConfig.starredOnly = false;
+folderSearchStarred.checked = false;
 const isInVirtualStack = S.path.some(node => node.id === 'virtual_search_root');
 let requiresReload = false;
 
@@ -57506,6 +57722,16 @@ if (UI.chkGlobal) UI.chkGlobal.addEventListener('click', guardGlobalSearchResult
 
 UI.chkGlobal.onchange = async (e) => {
 if (guardGlobalSearchResultCheckboxLock(e)) return;
+cancelFolderSearch();
+if (e.target.checked && S.folderSearch) {
+S.path = S.folderSearch.path.map(node => ({ ...node }));
+S.folderSearch = null;
+S.search = '';
+S.preSearchPath = null;
+S.lastGlobalResults = [];
+await load(false, false);
+}
+syncFolderSearchControls();
 if (e.target.checked) {
 if (S.movingIds && S.movingIds.size > 0) {
 e.target.checked = false;
@@ -58906,6 +59132,10 @@ return true;
 }
 
 UI.btnRefresh.onclick = async () => {
+if (S.folderSearch && S.path[S.path.length - 1]?.id === 'virtual_search_root') {
+await performFolderSearch(UI.searchInput.value, true);
+return;
+}
 if (shouldSuppressRefreshForVirtualResultPage()) return;
 updateQuotaUI();
 if (S.isFlattened) {
@@ -62767,6 +62997,7 @@ if (deletedSet.size === 0) return;
 
 if (S.lastGlobalResults && S.lastGlobalResults.length > 0) {
     S.lastGlobalResults = S.lastGlobalResults.filter(x => !deletedSet.has(x.id));
+if (S.folderSearch) S.folderSearch.items = S.folderSearch.items.filter(x => !deletedSet.has(x.id) && !(x._lineage || []).some(node => deletedSet.has(node.id)));
 }
 
 if (S.analyzeMode && S.analyzeResultItems) {
@@ -65433,6 +65664,7 @@ pruneClipboardByDeletedIds(deletedSet);
 
 if (typeof pkState !== 'undefined' && pkState && pkState.lastGlobalResults) {
 pkState.lastGlobalResults = pkState.lastGlobalResults.filter(x => !deletedSet.has(x.id));
+if (pkState.folderSearch) pkState.folderSearch.items = pkState.folderSearch.items.filter(x => !deletedSet.has(x.id) && !(x._lineage || []).some(node => deletedSet.has(node.id)));
 }
 
 if (typeof globalCache !== 'undefined') {
@@ -79912,6 +80144,7 @@ delete window.pkDeleteGhostFilesWithIndexSync;
 if (window.pkCancelCloudTargetWatch === cancelCloudTargetWatch) {
 delete window.pkCancelCloudTargetWatch;
 }
+cancelFolderSearch();
 DurationProber.reset();
 pkState = null;
 
@@ -81240,6 +81473,61 @@ globalParentIndex.set(f.id, { id: pId, name: pName });
 }
 }
 };
+
+
+const FOLDER_SEARCH_EXTS = {
+video: new Set('mp4 mkv avi mov wmv flv webm ts m4v 3gp mpg mpeg rm rmvb asf vob dat divx f4v m2ts mts tp trp ogv mpe m2v m3u8'.split(' ')),
+audio: new Set('mp3 wav flac aac ogg wma ape m4a amr opus m4b alac aiff mid midi ra dts ac3 dsf dff'.split(' ')),
+image: new Set('jpg jpeg png gif bmp webp svg tif tiff ico heic heif raw cr2 nef arw dng orf avif psd ai eps jfif jpe'.split(' '))
+};
+function filterFolderSearchItems(items, query, category = 'all', starredOnly = false) {
+const q = String(query || '').trim().toLowerCase();
+return items.filter(item => {
+if (!item || item.trashed || !item.id) return false;
+if (q && !String(item.name || '').toLowerCase().includes(q)) return false;
+if (starredOnly && !(item.starred || (item.tags || []).some(tag => tag && tag.name === 'STAR'))) return false;
+const folder = item.kind === 'drive#folder';
+if (category === 'all') return true;
+if (category === 'folder') return folder;
+if (folder) return false;
+const mime = String(item.mime_type || '').toLowerCase();
+const prefix = category === 'audio' ? 'audio/' : category + '/';
+const ext = String(item.name || '').toLowerCase().split('.').pop();
+return mime.startsWith(prefix) || !!(FOLDER_SEARCH_EXTS[category] && FOLDER_SEARCH_EXTS[category].has(ext));
+});
+}
+
+async function collectFolderSearchItems(root, listFolder, signal, includeChildren, onProgress) {
+const queue = [root];
+const visited = new Set();
+const items = new Map();
+let completed = 0;
+const checkAbort = () => {
+if (signal && signal.aborted) throw new DOMException('Search cancelled', 'AbortError');
+};
+for (let pos = 0; pos < queue.length; pos++) {
+checkAbort();
+const current = queue[pos];
+const id = current.id === 'root' ? '' : String(current.id || '');
+if (visited.has(id)) continue;
+visited.add(id);
+const files = await listFolder(id, current, signal);
+checkAbort();
+if (!Array.isArray(files)) throw new Error('Folder listing is incomplete');
+for (const file of files) {
+if (!file || !file.id || file.trashed) continue;
+// The lineage is the real parent path, so deep search results can be opened correctly.
+items.set(file.id, { ...file, _lineage: [...current.lineage] });
+if (includeChildren && file.kind === 'drive#folder' && !visited.has(String(file.id))) {
+queue.push({ id: file.id, name: file.name, lineage: [...current.lineage, { id: file.id, name: file.name }] });
+}
+}
+completed++;
+if (onProgress) onProgress({ folders: completed, items: items.size });
+}
+checkAbort();
+return [...items.values()];
+}
 
 const AUDIO_FILE_EXTS = new Set(['mp3','wav','flac','aac','m4a','ogg','opus','ape','wma','amr','m4b','alac','aiff','aif','mid','midi','ra','dts','ac3','dsf','dff']);
 
